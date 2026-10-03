@@ -91,8 +91,14 @@ use tracing::{error, event, instrument, trace};
 use uuid::Uuid;
 use validator::Validate;
 use workspace_template::document::parser::SerdeBlock;
+use redis::AsyncCommands;
 
 pub const WORKSPACE_ID_PATH: &str = "workspace_id";
+
+// Presence heartbeats: the web client syncs over REST (no collab WS), so it
+// reports liveness explicitly. Entries expire; reads only consider the window.
+const PRESENCE_TTL_SECS: i64 = 60;
+const PRESENCE_WINDOW_SECS: i64 = 30;
 pub const COLLAB_OBJECT_ID_PATH: &str = "object_id";
 
 pub const WORKSPACE_PATTERN: &str = "/api/workspace";
@@ -372,7 +378,8 @@ pub fn workspace_scope() -> Scope {
     )
     .service(
       web::resource("/{workspace_id}/presence/{object_id}")
-        .route(web::get().to(get_presence_handler)),
+        .route(web::get().to(get_presence_handler))
+        .route(web::post().to(post_presence_heartbeat_handler)),
     )
     .service(web::resource("/{workspace_id}/recent").route(web::get().to(get_recent_views_handler)))
     .service(
@@ -2519,15 +2526,69 @@ async fn get_presence_handler(
     .workspace_access_control
     .enforce_action(&uid, &workspace_id, Action::Read)
     .await?;
+  let mut uids = present_uids(&state, &group_manager, &workspace_id, &object_id).await;
+  uids.sort_unstable();
+  uids.dedup();
   let mut users = Vec::new();
-  if let Some(group) = group_manager.get_group(&object_id).await {
-    for connected_uid in group.connected_uids() {
-      if let Some(profile) = select_web_user_from_uid(&state.pg_pool, connected_uid).await? {
-        users.push(profile);
-      }
+  for connected_uid in uids {
+    if let Some(profile) = select_web_user_from_uid(&state.pg_pool, connected_uid).await? {
+      users.push(profile);
     }
   }
   Ok(Json(AppResponse::Ok().with_data(users)))
+}
+
+/// Merges realtime collab-group membership (desktop/WS clients) with REST
+/// heartbeats (web client, which syncs over REST, in a Redis sorted set).
+async fn present_uids(
+  state: &Data<AppState>,
+  group_manager: &Data<Arc<GroupManager>>,
+  workspace_id: &Uuid,
+  object_id: &Uuid,
+) -> Vec<i64> {
+  let mut uids = Vec::new();
+  if let Some(group) = group_manager.get_group(object_id).await {
+    uids.extend(group.connected_uids());
+  }
+  let mut conn = state.redis_connection_manager.clone();
+  let key = presence_key(workspace_id, object_id);
+  let cutoff = Utc::now().timestamp() - PRESENCE_WINDOW_SECS;
+  if let Ok(recent) = conn
+    .zrangebyscore::<_, _, _, Vec<i64>>(&key, cutoff, "+inf")
+    .await
+  {
+    uids.extend(recent);
+  }
+  uids
+}
+
+async fn post_presence_heartbeat_handler(
+  user_uuid: UserUuid,
+  path: web::Path<(Uuid, Uuid)>,
+  state: Data<AppState>,
+) -> Result<Json<AppResponse<()>>> {
+  let (workspace_id, object_id) = path.into_inner();
+  let uid = state.user_cache.get_user_uid(&user_uuid).await?;
+  state
+    .workspace_access_control
+    .enforce_action(&uid, &workspace_id, Action::Read)
+    .await?;
+  let mut conn = state.redis_connection_manager.clone();
+  let key = presence_key(&workspace_id, &object_id);
+  let now = Utc::now().timestamp();
+  conn
+    .zadd::<_, _, _, ()>(&key, uid, now)
+    .await
+    .map_err(|err| AppError::Internal(anyhow!("presence heartbeat failed: {}", err)))?;
+  conn
+    .expire::<_, ()>(&key, PRESENCE_TTL_SECS)
+    .await
+    .map_err(|err| AppError::Internal(anyhow!("presence heartbeat failed: {}", err)))?;
+  Ok(Json(AppResponse::Ok().with_data(()).into()))
+}
+
+fn presence_key(workspace_id: &Uuid, object_id: &Uuid) -> String {
+  format!("af_presence:{}:{}", workspace_id, object_id)
 }
 
 async fn get_recent_views_handler(
