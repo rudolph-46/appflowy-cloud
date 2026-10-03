@@ -1,3 +1,7 @@
+use crate::api::comment::{
+  delete_page_comment_handler, list_page_comments_handler, patch_page_comment_handler,
+  post_page_comment_handler,
+};
 use crate::api::util::{client_version_from_headers, realtime_user_for_web_request, PayloadReader};
 use crate::api::util::{compress_type_from_header_value, device_id_from_headers};
 use crate::api::ws::RealtimeServerAddr;
@@ -375,6 +379,16 @@ pub fn workspace_scope() -> Scope {
       web::resource("/{workspace_id}/favorite").route(web::get().to(get_favorite_views_handler)),
     )
     .service(web::resource("/{workspace_id}/trash").route(web::get().to(get_trash_views_handler)))
+    .service(
+      web::resource("/{workspace_id}/page/{view_id}/comment")
+        .route(web::post().to(post_page_comment_handler))
+        .route(web::get().to(list_page_comments_handler)),
+    )
+    .service(
+      web::resource("/{workspace_id}/comment/{comment_id}")
+        .route(web::patch().to(patch_page_comment_handler))
+        .route(web::delete().to(delete_page_comment_handler)),
+    )
     .service(
       web::resource("/{workspace_id}/trash/{view_id}")
         .route(web::delete().to(delete_page_from_trash_handler)),

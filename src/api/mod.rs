@@ -1,6 +1,7 @@
 pub mod access_request;
 pub mod ai;
 pub mod chat;
+pub mod comment;
 pub mod data_import;
 pub mod file_storage;
 pub mod guest;

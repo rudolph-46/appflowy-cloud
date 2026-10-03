@@ -1494,6 +1494,20 @@ pub struct ProcessedPageMentionNotification {
   pub person_id: Uuid,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PageComment {
+  pub comment_id: Uuid,
+  pub workspace_id: Uuid,
+  pub view_id: Uuid,
+  pub uid: i64,
+  pub user_name: Option<String>,
+  pub content: String,
+  pub reply_to: Option<Uuid>,
+  pub resolved: bool,
+  pub created_at: DateTime<Utc>,
+  pub updated_at: DateTime<Utc>,
+}
+
 #[cfg(test)]
 mod test {
   use crate::dto::{CreateCollabData, CreateCollabDataV0};
