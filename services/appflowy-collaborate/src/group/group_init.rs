@@ -410,6 +410,19 @@ impl CollabGroup {
     self.state.subscribers.contains_key(user)
   }
 
+  /// Returns the unique user ids currently connected to this group.
+  pub fn connected_uids(&self) -> Vec<i64> {
+    let mut uids: Vec<i64> = self
+      .state
+      .subscribers
+      .iter()
+      .map(|entry| entry.key().uid)
+      .collect();
+    uids.sort_unstable();
+    uids.dedup();
+    uids
+  }
+
   pub fn remove_user(&self, user: &RealtimeUser) {
     if self.state.subscribers.remove(user).is_some() {
       trace!(

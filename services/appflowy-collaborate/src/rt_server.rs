@@ -80,6 +80,12 @@ impl CollaborationServer {
     })
   }
 
+  /// Exposes the group manager so HTTP handlers can query connected users
+  /// without going through the actor mailbox.
+  pub fn group_manager(&self) -> Arc<GroupManager> {
+    self.group_manager.clone()
+  }
+
   /// Handles a new user connection, replacing any existing connection for the same user.
   ///
   /// - Creates a new client stream for the connected user.

@@ -45,6 +45,7 @@ use app_error::{AppError, ErrorCode};
 use appflowy_collaborate::actix_ws::entities::{
   ClientGenerateEmbeddingMessage, ClientHttpStreamMessage, ClientHttpUpdateMessage,
 };
+use appflowy_collaborate::group::manager::GroupManager;
 
 use bytes::BytesMut;
 use chrono::{DateTime, Duration, Utc};
@@ -61,7 +62,7 @@ use collab_rt_entity::realtime_proto::HttpRealtimeMessage;
 use collab_rt_entity::user::RealtimeUser;
 use collab_rt_entity::RealtimeMessage;
 use collab_rt_protocol::collab_from_encode_collab;
-use database::user::select_uid_from_email;
+use database::user::{select_uid_from_email, select_web_user_from_uid};
 use database_entity::dto::PublishCollabItem;
 use database_entity::dto::PublishInfo;
 use database_entity::dto::*;
@@ -78,6 +79,7 @@ use shared_entity::response::AppResponseError;
 use shared_entity::response::{AppResponse, JsonAppResponse};
 use sqlx::types::uuid;
 use std::io::Cursor;
+use std::sync::Arc;
 use std::time::Instant;
 use tokio_stream::StreamExt;
 use tokio_tungstenite::tungstenite::Message;
@@ -363,6 +365,10 @@ pub fn workspace_scope() -> Scope {
     )
     .service(
       web::resource("/{workspace_id}/folder").route(web::get().to(get_workspace_folder_handler)),
+    )
+    .service(
+      web::resource("/{workspace_id}/presence/{object_id}")
+        .route(web::get().to(get_presence_handler)),
     )
     .service(web::resource("/{workspace_id}/recent").route(web::get().to(get_recent_views_handler)))
     .service(
@@ -2485,6 +2491,29 @@ async fn get_workspace_folder_handler(
   )
   .await?;
   Ok(Json(AppResponse::Ok().with_data(folder_view)))
+}
+
+async fn get_presence_handler(
+  user_uuid: UserUuid,
+  path: web::Path<(Uuid, Uuid)>,
+  state: Data<AppState>,
+  group_manager: Data<Arc<GroupManager>>,
+) -> Result<Json<AppResponse<Vec<AFWebUser>>>> {
+  let (workspace_id, object_id) = path.into_inner();
+  let uid = state.user_cache.get_user_uid(&user_uuid).await?;
+  state
+    .workspace_access_control
+    .enforce_action(&uid, &workspace_id, Action::Read)
+    .await?;
+  let mut users = Vec::new();
+  if let Some(group) = group_manager.get_group(&object_id).await {
+    for connected_uid in group.connected_uids() {
+      if let Some(profile) = select_web_user_from_uid(&state.pg_pool, connected_uid).await? {
+        users.push(profile);
+      }
+    }
+  }
+  Ok(Json(AppResponse::Ok().with_data(users)))
 }
 
 async fn get_recent_views_handler(

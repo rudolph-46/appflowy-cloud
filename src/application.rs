@@ -134,6 +134,9 @@ pub async fn run_actix_server(
   .await
   .unwrap();
 
+  // Share the group manager with HTTP handlers (presence endpoint). Cloned
+  // before the server value moves into its actor; group reads are lock-free.
+  let group_manager = realtime_server.group_manager();
   let realtime_server_actor = Supervisor::start(|_| RealtimeServerActor(realtime_server));
   let mut server = HttpServer::new(move || {
     let app = App::new()
@@ -172,6 +175,7 @@ pub async fn run_actix_server(
       .app_data(Data::new(state.metrics.realtime_metrics.clone()))
       .app_data(Data::new(state.metrics.access_control_metrics.clone()))
       .app_data(Data::new(realtime_server_actor.clone()))
+      .app_data(Data::new(group_manager.clone()))
       .app_data(Data::new(state.config.gotrue.jwt_secret.clone()))
       .app_data(Data::new(state.clone()))
       .app_data(Data::new(storage.clone()))

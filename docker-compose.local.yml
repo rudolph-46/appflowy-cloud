@@ -1,0 +1,60 @@
+# Local development infrastructure — postgres, redis, gotrue.
+# No MinIO (dead upstream): file storage goes to a SEPARATE R2 bucket
+# (see dev.sh / R2_BUCKET_DEV) via the cloud's S3 settings.
+# Ports avoid the machine's own postgres (5432) and node (3000).
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${LOCAL_POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${LOCAL_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${LOCAL_POSTGRES_DB:-postgres}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    ports:
+      - "${LOCAL_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${LOCAL_REDIS_PORT:-6379}:6379"
+    command: redis-server --appendonly yes
+
+  gotrue:
+    image: appflowyinc/gotrue:0.9.64
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "9999:9999"
+    environment:
+      - PORT=9999
+      - GOTRUE_DB_DRIVER=postgres
+      - DATABASE_URL=postgres://${LOCAL_POSTGRES_USER:-postgres}:${LOCAL_POSTGRES_PASSWORD}@postgres:5432/${LOCAL_POSTGRES_DB:-postgres}?search_path=auth
+      - API_EXTERNAL_URL=http://localhost:9999
+      - GOTRUE_SITE_URL=http://localhost:5173
+      - GOTRUE_URI_ALLOW_LIST=**
+      - GOTRUE_JWT_SECRET=${LOCAL_GOTRUE_JWT_SECRET}
+      - GOTRUE_JWT_EXP=604800
+      - GOTRUE_JWT_ADMIN_GROUP_NAME=supabase_admin
+      - GOTRUE_ADMIN_EMAIL=${LOCAL_GOTRUE_ADMIN_EMAIL:-admin@example.com}
+      - GOTRUE_ADMIN_PASSWORD=${LOCAL_GOTRUE_ADMIN_PASSWORD}
+      - GOTRUE_DISABLE_SIGNUP=${LOCAL_GOTRUE_DISABLE_SIGNUP:-false}
+      - GOTRUE_MAILER_AUTOCONFIRM=true
+      - GOTRUE_MAILER_URLPATHS_CONFIRMATION=/gotrue/verify
+      - GOTRUE_MAILER_URLPATHS_INVITE=/gotrue/verify
+      - GOTRUE_MAILER_URLPATHS_RECOVERY=/gotrue/verify
+      - GOTRUE_RATE_LIMIT_EMAIL_SENT=100
+
+volumes:
+  pgdata_local:
