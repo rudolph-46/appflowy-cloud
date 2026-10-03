@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+# Builds the AppFlowy-Web SPA from a pinned upstream commit placed in web-src/.
+# AF_* URLs are baked at build time: import.meta.env is a build-time mechanism
+# in Vite, so the image is tied to the deployment's public host.
+FROM node:20.12.0 AS builder
+WORKDIR /app
+RUN npm install -g pnpm@10.9.0
+COPY web-src/ .
+# pnpm 10 blocks dependency build scripts by default; vite needs esbuild's.
+RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.pnpm={onlyBuiltDependencies:['esbuild']};fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+ARG AF_BASE_URL
+ARG AF_GOTRUE_URL
+ARG AF_WS_URL
+ENV AF_BASE_URL=$AF_BASE_URL \
+    AF_GOTRUE_URL=$AF_GOTRUE_URL \
+    AF_WS_URL=$AF_WS_URL
+RUN pnpm install --frozen-lockfile && pnpm run build
+
+FROM nginx:alpine
+COPY docker/web/nginx.conf /etc/nginx/nginx.conf
+COPY --from=builder /app/dist /usr/share/nginx/html/
